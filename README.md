@@ -46,9 +46,9 @@ open up localhost:
 
 ## Sample
 
-![OpenAI Logo](https://github.com/codeakki/TextToSQLUsingGENAI/blob/main/image.png)
+![OpenAI Logo](https://github.com/codeakki/McqGeneratorOpenAi/blob/master/image.png)
 
-![Exapmple2](https://github.com/codeakki/TextToSQLUsingGENAI/blob/main/image2.png)
+![Exapmple2](https://github.com/codeakki/McqGeneratorOpenAi/blob/master/image2.png)
 
 ## HuggingFace
 
