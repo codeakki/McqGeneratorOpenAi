@@ -1,4 +1,8 @@
-AUTOMATED MCQ GENERATOR USING LANGCHAIN AND OPENAI-API
+## AUTOMATED MCQ GENERATOR USING LANGCHAIN AND OPENAI-API
+
+
+
+The "Automated MCQ Generator Using LangChain and OpenAI API" project aims to create a system that automatically generates multiple-choice questions (MCQs) using the LangChain library in conjunction with the OpenAI API. This system leverages advanced natural language processing techniques to analyze and understand textual content, then formulates relevant and accurate MCQs to aid in educational assessments and training programs. The automation of this process saves time and effort for educators and trainers, ensuring a high-quality and consistent question generation process.
 
 # How to run?
 
