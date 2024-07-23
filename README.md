@@ -50,9 +50,7 @@ open up localhost:
 
 ![Exapmple2](https://github.com/codeakki/McqGeneratorOpenAi/blob/master/image2.png)
 
-## HuggingFace
 
-https://huggingface.co/spaces/codeakki/TextToSQLUsingGENAI/tree/main
 
 ### Techstack Used:
 
