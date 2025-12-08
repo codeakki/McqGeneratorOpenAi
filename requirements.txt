@@ -5,4 +5,9 @@ python-dotenv
 PyPDF2
 langchain_community
 langchain-openai
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+ollama
 -e .
