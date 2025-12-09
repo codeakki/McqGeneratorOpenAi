@@ -69,6 +69,23 @@ class MCQGenerateRequest(BaseModel):
     pickle_filename: Optional[str] = Field(default="document.pkl", description="Name of the pickle file to use")
 
 
+# Request model for Chatbot
+class ChatbotRequest(BaseModel):
+    question: str = Field(..., description="Question to ask about the document content")
+    level: int = Field(default=5, ge=1, le=10, description="Explanation level: 1 = most detailed/simple, 10 = brief/advanced")
+    pickle_filename: Optional[str] = Field(default="document.pkl", description="Name of the pickle file to use")
+
+
+# Response format template for chatbot
+CHATBOT_RESPONSE_FORMAT = {
+    "is_related": True,  # Boolean: whether question is related to content
+    "topic": "Topic name from the chapter",
+    "answer": "The detailed answer here",
+    "key_points": ["Point 1", "Point 2", "Point 3"],
+    "summary": "A brief one-line summary"
+}
+
+
 def extract_text_from_file(file: UploadFile) -> str:
     """Extract text from uploaded PDF or TXT file"""
     content = file.file.read()
@@ -107,15 +124,84 @@ def get_difficulty_tone(level: int) -> str:
     return tones.get(level, "intermediate")
 
 
+def get_explanation_style(level: int) -> str:
+    """Convert level to explanation style - lower level = more detailed explanation"""
+    styles = {
+        1: "Explain in the most detailed and simple way possible. Use very easy words, give multiple examples, break down every concept step by step like explaining to a child. Be thorough and patient.",
+        2: "Explain in great detail using simple language. Provide several examples and analogies. Break complex ideas into smaller parts.",
+        3: "Explain thoroughly with clear examples. Use simple vocabulary and provide step-by-step explanations.",
+        4: "Explain clearly with good examples. Use accessible language and provide helpful context.",
+        5: "Explain in a balanced way with moderate detail. Include relevant examples where helpful.",
+        6: "Explain concisely but clearly. Include key examples only when necessary.",
+        7: "Explain efficiently, focusing on main points. Assume some background knowledge.",
+        8: "Explain briefly and directly. Focus on key concepts without extensive elaboration.",
+        9: "Explain in a compact, advanced manner. Use technical terms freely.",
+        10: "Explain very briefly and concisely. Assume expert-level understanding. Be direct and to the point."
+    }
+    return styles.get(level, styles[5])
+
+
+def create_chatbot_chain():
+    """Create the chatbot chain for Q&A based on document content"""
+    template = """
+    You are a helpful assistant that answers questions ONLY based on the provided text content.
+    
+    IMPORTANT RULES:
+    1. ONLY answer if the question is related to the content provided below
+    2. If the question is NOT related to the content or cannot be answered from the content, set is_related to false
+    3. Do NOT make up information or use external knowledge
+    4. Base your answer STRICTLY on the provided text
+    5. ALWAYS respond in the exact JSON format specified below
+    
+    TEXT CONTENT:
+    {text}
+    
+    EXPLANATION STYLE:
+    {explanation_style}
+    
+    USER QUESTION:
+    {question}
+    
+    RESPOND IN THIS EXACT JSON FORMAT ONLY (no other text before or after):
+    {{
+        "is_related": true or false,
+        "topic": "The specific topic from the chapter this question relates to (or 'N/A' if not related)",
+        "answer": "Your detailed answer here following the explanation style (or 'Sorry, please ask a question related to the chapter content.' if not related)",
+        "key_points": ["Key point 1", "Key point 2", "Key point 3"],
+        "summary": "A brief one-line summary of the answer"
+    }}
+    
+    JSON RESPONSE:
+    """
+    
+    chatbot_prompt = PromptTemplate(
+        input_variables=["text", "explanation_style", "question"],
+        template=template
+    )
+    
+    chatbot_chain = LLMChain(llm=llm, prompt=chatbot_prompt, output_key="answer", verbose=True)
+    
+    return chatbot_chain
+
+
 def create_mcq_chain():
     """Create the MCQ generation chain"""
     template = """
     Text:{text}
     You are an expert MCQ maker. Given the above text, it is your job to \
     create a quiz of {number} multiple choice questions for {subject} students in {tone} tone. 
-    Make sure the questions are not repeated and check all the questions to be conforming the text as well.
+    
+    IMPORTANT RULES:
+    1. Each question must have EXACTLY ONE correct answer (NO multiple selection questions)
+    2. Each question must have exactly 4 options: a, b, c, d
+    3. Only ONE option should be correct
+    4. The "correct" field must contain ONLY the letter of the correct option (a, b, c, or d)
+    5. Make sure questions are not repeated
+    6. All questions must be based on the provided text
+    7. Return ONLY valid JSON format, no other text
+    
     Make sure to format your response like RESPONSE_JSON below and use it as a guide ensure to return json format data only. \
-    Ensure to make {number} MCQs
+    Ensure to make {number} MCQs with SINGLE correct answer each.
     ### RESPONSE_JSON
     {response_json}
     """
@@ -281,19 +367,19 @@ async def generate_mcqs(request: MCQGenerateRequest):
         # Create MCQ chain and generate
         chain = create_mcq_chain()
         
-        # Generate response JSON template for 10 MCQs
+        # Generate response JSON template for 10 MCQs (single correct answer only)
         response_template = {}
         for i in range(1, 11):
             response_template[str(i)] = {
                 "no": str(i),
-                "mcq": "multiple choice question",
+                "mcq": "Write the question here",
                 "options": {
-                    "a": "choice here",
-                    "b": "choice here",
-                    "c": "choice here",
-                    "d": "choice here"
+                    "a": "First option",
+                    "b": "Second option",
+                    "c": "Third option",
+                    "d": "Fourth option"
                 },
-                "correct": "correct answer"
+                "correct": "a"  # ONLY ONE letter (a, b, c, or d) - single correct answer
             }
         
         # Track token usage for OpenAI, skip for Ollama
@@ -357,6 +443,119 @@ async def generate_mcqs(request: MCQGenerateRequest):
     except Exception as e:
         traceback.print_exception(type(e), e, e.__traceback__)
         raise HTTPException(status_code=500, detail=f"Error generating MCQs: {str(e)}")
+
+
+@app.post("/chat/",
+          summary="Chat with document content",
+          description="Ask questions about the uploaded document. Lower level = more detailed explanation.")
+async def chat_with_document(request: ChatbotRequest):
+    """
+    API 3: Chatbot - Ask questions about the document content
+    
+    - **question**: Your question about the document
+    - **level**: Explanation level (1-10). Lower = more detailed, Higher = more brief
+    - **pickle_filename**: Name of the pickle file to use (default: document.pkl)
+    """
+    try:
+        # Load text from pickle file
+        pickle_path = os.path.join(PICKLE_DIR, request.pickle_filename)
+        
+        if not os.path.exists(pickle_path):
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Pickle file '{request.pickle_filename}' not found. Please upload a file first."
+            )
+        
+        with open(pickle_path, 'rb') as f:
+            data = pickle.load(f)
+        
+        text = data.get("text", "")
+        if not text:
+            raise HTTPException(status_code=400, detail="No text found in the pickle file")
+        
+        # Get explanation style based on level
+        explanation_style = get_explanation_style(request.level)
+        
+        # Create chatbot chain and get answer
+        chain = create_chatbot_chain()
+        
+        # Track token usage for OpenAI, skip for Ollama
+        token_info = None
+        
+        if USE_OFFLINE:
+            # Offline mode - no token tracking
+            response = chain({
+                "text": text,
+                "explanation_style": explanation_style,
+                "question": request.question
+            })
+        else:
+            # Online mode - track tokens
+            from langchain_community.callbacks import get_openai_callback
+            with get_openai_callback() as cb:
+                response = chain({
+                    "text": text,
+                    "explanation_style": explanation_style,
+                    "question": request.question
+                })
+                token_info = {
+                    "total_tokens": cb.total_tokens,
+                    "prompt_tokens": cb.prompt_tokens,
+                    "completion_tokens": cb.completion_tokens,
+                    "total_cost": cb.total_cost
+                }
+        
+        raw_answer = response.get("answer", "").strip()
+        
+        # Try to parse the structured JSON response
+        parsed_response = None
+        try:
+            # Extract JSON from the response
+            json_start = raw_answer.find('{')
+            json_end = raw_answer.rfind('}') + 1
+            if json_start != -1 and json_end > json_start:
+                json_str = raw_answer[json_start:json_end]
+                parsed_response = json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+        
+        result = {
+            "success": True,
+            "mode": "offline" if USE_OFFLINE else "online",
+            "question": request.question,
+            "level": request.level,
+            "level_description": f"Level {request.level}: {'Very detailed' if request.level <= 3 else 'Moderate detail' if request.level <= 6 else 'Brief/Advanced'}",
+        }
+        
+        if parsed_response:
+            # Structured response
+            result["response"] = {
+                "is_related": parsed_response.get("is_related", True),
+                "topic": parsed_response.get("topic", "General"),
+                "answer": parsed_response.get("answer", ""),
+                "key_points": parsed_response.get("key_points", []),
+                "summary": parsed_response.get("summary", "")
+            }
+        else:
+            # Fallback to raw answer if parsing fails
+            result["response"] = {
+                "is_related": True,
+                "topic": "General",
+                "answer": raw_answer,
+                "key_points": [],
+                "summary": ""
+            }
+        
+        if token_info:
+            result["tokens_used"] = token_info
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exception(type(e), e, e.__traceback__)
+        raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
 
 
 @app.get("/list-pickle-files/",
