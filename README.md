@@ -63,3 +63,20 @@ open up localhost:
 - langchain
 - Streamlit
 - PyPDF2
+
+
+# 1. Setup (one-time)
+cd Desktop\McqGeneratorOpenAi
+python -m venv venv
+venv\Scripts\activate
+pip install fastapi "uvicorn[standard]" pydantic python-dotenv PyPDF2 langchain langchain-community langchain-openai openai python-multipart
+
+# 2. Start Ollama (in separate terminal)
+ollama serve
+
+# 3. Pull model (one-time, in another terminal)
+ollama pull llama3.2
+
+# 4. Run API (in project terminal with venv activated)
+venv\Scripts\activate
+uvicorn api_app:app --reload --host 0.0.0.0 --port 8000
